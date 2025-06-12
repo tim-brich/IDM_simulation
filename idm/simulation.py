@@ -1,151 +1,116 @@
-# idm/simulation.py
-
 import numpy as np
 import pandas as pd
-
 from idm.model import Vehicle, IDM
-
 
 class TrafficSimulation:
     """
-    Класс, отвечающий за эмуляцию движения автопотока по модели IDM
-    и за сбор данных для последующего анализа или визуализации.
-
-    Параметры:
-        num_vehicles (int): Число автомобилей.
-        sim_time (float): Общее время симуляции (с).
-        dt (float): Шаг времени (с).
-        road_length (float): Длина «дороги» (м).
-        distribution (str): Тип распределения позиций ('uniform' или 'normal').
-        speed_range (tuple[float, float]): Диапазон начальных скоростей (min, max).
+    Класс для эмуляции движения автопотока по модели IDM с различными законами распределения начальных позиций
+    и опциональной фиксированной скоростью лидера.
     """
-
-    def __init__(
-        self,
-        num_vehicles: int = 10,
-        sim_time: float = 60.0,
-        dt: float = 0.1,
-        road_length: float = 1000.0,
-        distribution: str = 'uniform',
-        speed_range: tuple[float, float] = (15.0, 25.0)
-    ):
+    def __init__(self,
+                 num_vehicles=10,
+                 sim_time=60.0,
+                 dt=0.1,
+                 road_length=1000.0,
+                 distribution='uniform',
+                 speed_range=(15.0, 25.0),
+                 fixed_first_speed=None):
         self.num_vehicles = num_vehicles
         self.sim_time = float(sim_time)
         self.dt = float(dt)
         self.road_length = float(road_length)
         self.distribution = distribution
         self.speed_range = speed_range
+        self.fixed_first_speed = fixed_first_speed  # None или число
 
-        self.vehicles: list[Vehicle] = []
+        self.vehicles = []
         self.idm = IDM()
-        self.data: list[dict] = []  # Список словарей с результатами
-
+        self.data = []
         self._initialize_vehicles()
-
-    def _initialize_vehicles(self) -> None:
-        """
-        Инициализация автомобилей:
-
-        - Вычисляем начальные позиции в зависимости от self.distribution.
-        - Начальные скорости случайно из self.speed_range.
-        """
-        if self.num_vehicles <= 0:
-            raise ValueError("num_vehicles должен быть ≥ 1")
-
-        if self.distribution == 'uniform':
-            spacing = self.road_length / self.num_vehicles
-            positions = [i * spacing for i in range(self.num_vehicles)]
-        elif self.distribution == 'normal':
-            positions = np.random.normal(
-                loc=self.road_length / 2,
-                scale=self.road_length / 5,
-                size=self.num_vehicles
-            )
-            positions = np.clip(positions, 0.0, self.road_length)
-            positions.sort()
+        # Определяем лидера (максимальная позиция) при фиксированной скорости
+        if self.fixed_first_speed is not None:
+            lead_car = max(self.vehicles, key=lambda v: v.position)
+            self.first_vehicle_id = lead_car.vehicle_id
         else:
-            raise ValueError(f"Unknown distribution type: {self.distribution}")
+            self.first_vehicle_id = None
 
-        for i, pos in enumerate(positions):
-            vel = np.random.uniform(self.speed_range[0], self.speed_range[1])
-            car = Vehicle(vehicle_id=i, position=pos, velocity=vel)
-            self.vehicles.append(car)
+    def _initialize_vehicles(self):
+        """
+        Инициализация начальных позиций по выбранному закону:
+          'uniform', 'random', 'normal', 'exponential', 'triangular'
+        Присваиваем начальные скорости из диапазона speed_range.
+        """
+        N = self.num_vehicles
+        L = self.road_length
+        if self.distribution == 'uniform':
+            positions = np.linspace(0, L, N, endpoint=False)
+        elif self.distribution == 'random':
+            positions = np.random.uniform(0, L, size=N)
+        elif self.distribution == 'normal':
+            positions = np.random.normal(loc=L/2, scale=L/5, size=N)
+        elif self.distribution == 'exponential':
+            positions = np.random.exponential(scale=L/N, size=N)
+        elif self.distribution == 'triangular':
+            positions = np.random.triangular(left=0, mode=L/2, right=L, size=N)
+        else:
+            raise ValueError(f"Unknown distribution: {self.distribution}")
+        positions = np.clip(positions, 0, L)
+        positions.sort()
 
-    def run(self) -> None:
+        speeds = np.random.uniform(self.speed_range[0], self.speed_range[1], size=N)
+        for i, (pos, vel) in enumerate(zip(positions, speeds)):
+            self.vehicles.append(Vehicle(vehicle_id=i, position=pos, velocity=vel))
+
+    def run(self):
         """
         Запуск симуляции:
-
-        Для каждого временного шага t = 0, dt, 2*dt, …, sim_time:
-          1) Для каждой машины car из self.vehicles:
-             - Находим lead_car: ближайшую впереди идущую машину (position > car.position),
-               у которой дистанция минимальна.
-             - Вычисляем ускорение a = IDM.calculate_acceleration(car, lead_car).
-          2) После вычисления ускорений:
-             - Для каждой машины рассчитываем новое положение и скорость:
-               OLD_V = car.velocity
-               NEW_V = max(0, OLD_V + a*dt)
-               ΔX = OLD_V*dt + 0.5*a*dt^2
-               gap = (lead_car.position - car.position - 5) если lead_car, иначе inf
-               Если ΔX > gap, то ΔX = gap
-               car.position += ΔX
-               car.velocity = NEW_V
-               car.acceleration = a
-             - Сохраняем запись {time, id, x, y, v, a, mass} в self.data.
+          - вычисляем ускорения IDM для всех, кроме лидера
+          - обновляем состояния: leader с фиксированной скоростью, остальные через car.update
+          - предотвращаем обгон, контролируя минимальную дистанцию
+          - сохраняем данные
         """
-        time_steps = int(self.sim_time / self.dt)
-        for t in range(time_steps):
+        steps = int(self.sim_time / self.dt)
+        for t in range(steps):
             current_time = t * self.dt
-
-            # 1) Сначала вычисляем ускорения для всех машин
-            accelerations: list[float] = []
-            lead_cars: list[Vehicle | None] = []
-
+            # Вычисление ускорений для последователей
+            accelerations = {}
+            leads = {}
             for car in self.vehicles:
-                lead_car = None
+                if car.vehicle_id == self.first_vehicle_id:
+                    # лидер не рассчитывает IDM
+                    continue
+                # поиск лидера
+                lead = None
                 min_gap = np.inf
                 for other in self.vehicles:
                     if other.position > car.position:
                         gap = other.position - car.position
                         if gap < min_gap:
-                            min_gap = gap
-                            lead_car = other
-                lead_cars.append(lead_car)
+                            min_gap, lead = gap, other
+                accelerations[car.vehicle_id] = self.idm.calculate_acceleration(car, lead)
+                leads[car.vehicle_id] = lead
 
-                a = self.idm.calculate_acceleration(car, lead_car)
-                accelerations.append(a)
-
-            # 2) Теперь обновляем все машины с учётом gap
-            for idx, car in enumerate(self.vehicles):
-                a = accelerations[idx]
-                lead_car = lead_cars[idx]
-
-                # Рассчитываем текущий gap (до передней машины)
-                if lead_car is None:
-                    gap = np.inf
+            # Обновление состояний
+            for car in self.vehicles:
+                if car.vehicle_id == self.first_vehicle_id and self.fixed_first_speed is not None:
+                    # обновление лидера по фиксированной скорости
+                    car.acceleration = 0.0
+                    car.velocity = self.fixed_first_speed
+                    car.position += car.velocity * self.dt
                 else:
-                    gap = lead_car.position - car.position - 5.0
-
-                # Интегрируем скорость
-                old_v = car.velocity
-                new_v = old_v + a * self.dt
-                if new_v < 0.0:
-                    new_v = 0.0
-
-                # Интегрируем положение
-                dx = old_v * self.dt + 0.5 * a * (self.dt ** 2)
-                if dx < 0.0:
-                    dx = 0.0
-
-                # Если приращение превышает gap, прижимаемся к lead_car
-                if dx > gap:
-                    dx = gap
-
-                # Обновляем состояние машины
-                car.position += dx
-                car.velocity = new_v
-                car.acceleration = a
-
-                # Сохраняем данные в результирующий список
+                    # применение IDM
+                    a = accelerations.get(car.vehicle_id, 0.0)
+                    car.update(a, self.dt)
+                # предотвращение обгона
+                lead = leads.get(car.vehicle_id)
+                if lead is not None:
+                    min_dist = self.idm.s0 + 5.0
+                    max_pos = lead.position - min_dist
+                    if car.position > max_pos:
+                        car.position = max_pos
+                        car.velocity = min(car.velocity, lead.velocity)
+                        car.acceleration = 0.0
+                # сохранение данных
                 self.data.append({
                     'time': current_time,
                     'id': car.vehicle_id,
@@ -156,23 +121,15 @@ class TrafficSimulation:
                     'mass': car.mass
                 })
 
-    def get_data(self) -> pd.DataFrame:
+    def get_data(self):
         """
-        Возвращает результаты симуляции в виде pandas.DataFrame.
-
-        Колонки: time, id, x, y, v, a, mass
-
-        Returns:
-            pandas.DataFrame: Датафрейм со всеми записями self.data.
+        Возвращает pandas.DataFrame с колонками time, id, x, y, v, a, mass.
         """
         return pd.DataFrame(self.data)
 
-    def save_csv(self, path: str = "data/simulation_output.csv") -> None:
+    def save_csv(self, path="data/simulation_output.csv"):
         """
-        Сохраняет результаты симуляции в CSV-файл по указанному пути.
-
-        Args:
-            path (str): Путь до CSV (по умолчанию 'data/simulation_output.csv').
+        Сохраняет результаты в CSV-файл.
         """
         df = self.get_data()
         df.to_csv(path, index=False)
