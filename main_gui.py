@@ -27,7 +27,10 @@ def run_simulation_and_animate(params):
     ax.add_patch(road)
 
     scat = ax.scatter([], [], s=params['marker_size'], color='red')
-    annotations = [ax.text(0, -params['lane_width']/2 + 0.1, '', ha='center', va='bottom', fontsize=8, color='blue') for _ in range(params['num_vehicles'])]
+    annotations = [
+        ax.text(0, -params['lane_width']/2 + 0.1, '', ha='center', va='bottom', fontsize=8, color='blue')
+        for _ in range(params['num_vehicles'])
+    ]
 
     def update(frame):
         t = times[frame]
@@ -41,7 +44,13 @@ def run_simulation_and_animate(params):
         ax.set_title(f"t = {t:.2f} с")
         return scat, *annotations
 
-    ani = animation.FuncAnimation(fig, update, frames=len(times), interval=50, blit=False)
+    ani = animation.FuncAnimation(
+        fig,
+        update,
+        frames=len(times),
+        interval=params['interval'],
+        blit=False
+    )
     plt.tight_layout()
     plt.show()
 
@@ -49,14 +58,14 @@ def run_simulation_and_animate(params):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('IDM Симулятор (Функциональный подход)')
+        self.title('IDM Симулятор')
         self.entries = {}
         self._build_ui()
 
     def _build_ui(self):
+        # Параметры симуляции
         sim_fr = ttk.LabelFrame(self, text='Параметры симуляции')
         sim_fr.pack(fill='x', padx=10, pady=5)
-        # Поля параметров симуляции
         for name, lbl, default in [
             ('num_vehicles', 'Число машин', '30'),
             ('sim_time', 'Время симуляции (с)', '60'),
@@ -72,11 +81,14 @@ class App(tk.Tk):
             ttk.Entry(sim_fr, textvariable=var, width=8).pack(side='left', padx=(0,5))
             self.entries[name] = var
 
-        # Распределение позиций на новой строке
+        # Распределение позиций
         dist_label = ttk.Label(sim_fr, text='Распределение позиций')
         dist_label.pack(anchor='w', pady=(10,0))
         dist_var = tk.StringVar(value='uniform')
-        ttk.OptionMenu(sim_fr, dist_var, 'uniform', 'uniform', 'random', 'normal', 'exponential', 'triangular').pack(anchor='w', padx=(0,5), pady=(0,5))
+        ttk.OptionMenu(
+            sim_fr, dist_var, 'uniform',
+            'uniform', 'random', 'normal', 'exponential', 'triangular'
+        ).pack(anchor='w', padx=(0,5), pady=(0,5))
         self.entries['distribution'] = dist_var
 
         # Параметры модели IDM
@@ -96,17 +108,19 @@ class App(tk.Tk):
             self.entries[name] = var
 
         # Параметры визуализации
-        vis_fr = ttk.LabelFrame(self, text='Визуализация')
+        vis_fr = ttk.LabelFrame(self, text='Параметры визуализации')
         vis_fr.pack(fill='x', padx=10, pady=5)
         for name, lbl, default in [
             ('marker_size', 'Размер маркеров (px)', '200'),
-            ('lane_width', 'Ширина полосы (м)', '3.5')
+            ('lane_width', 'Ширина полосы (м)', '3.5'),
+            ('interval', 'Интервал кадров (мс)', '50')
         ]:
             ttk.Label(vis_fr, text=lbl).pack(side='left')
             var = tk.StringVar(value=default)
             ttk.Entry(vis_fr, textvariable=var, width=8).pack(side='left', padx=(0,5))
             self.entries[name] = var
 
+        # Кнопка запуска
         ttk.Button(self, text='Запустить симуляцию', command=self._on_run).pack(pady=10)
 
     def _on_run(self):
@@ -126,8 +140,9 @@ class App(tk.Tk):
             idm_keys = ['a_max', 'b', 'delta', 's0', 'T', 'v0']
             params['idm'] = {k: params.pop(k) for k in idm_keys}
             params['speed_range'] = (params.pop('speed_min'), params.pop('speed_max'))
-            # Добавляем длину автомобиля
+            # Дополнительные параметры
             params['car_length'] = params.pop('car_length')
+            params['interval'] = params.pop('interval')
 
         except Exception as e:
             messagebox.showerror('Ошибка', str(e))

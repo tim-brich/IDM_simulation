@@ -77,7 +77,7 @@
 Рекомендуется запуск через графический интерфейс:
 
 ```bash
-python main.py
+python main_gui.py
 ```
 
 После запуска откроется окно:
@@ -167,7 +167,7 @@ python main.py visualize_matplotlib \
 
 ```
 IDM_Project/
-├── main.py                 # GUI-интерфейс и точка входа
+├── main_gui.py                 # GUI-интерфейс и точка входа
 ├── idm/
 │   ├── model.py            # Класс Vehicle и IDM
 │   └── simulation.py       # TrafficSimulation с распределениями и fixed_first_speed
