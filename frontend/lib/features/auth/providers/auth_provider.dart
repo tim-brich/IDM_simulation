@@ -34,8 +34,13 @@ class Login extends _$Login {
           'email': email,
           'password': password,
         });
+      } on DioException catch (e) {
+        // If it's a 400 it likely means user already exists, which is fine
+        if (e.response?.statusCode != 400) {
+          rethrow;
+        }
       } catch (e) {
-        // Ignore error if user already exists
+        // Ignore other register errors for now, might just be network
       }
 
       // Then login
