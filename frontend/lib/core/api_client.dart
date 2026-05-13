@@ -10,3 +10,5 @@ final dio = Dio(
     receiveTimeout: const Duration(seconds: 10),
   ),
 );
+
+// We will add an interceptor in a provider scope so it can access the token state.
