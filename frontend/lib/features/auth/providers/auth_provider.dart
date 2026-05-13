@@ -37,27 +37,33 @@ class Login extends _$Login {
       } on DioException catch (e) {
         // If it's a 400 it likely means user already exists, which is fine
         if (e.response?.statusCode != 400) {
+          print('REGISTER DIO ERROR: $e');
           rethrow;
         }
       } catch (e) {
-        // Ignore other register errors for now, might just be network
+        print('REGISTER ERROR: $e');
       }
 
       // Then login
       final response = await dio.post(
         '/auth/login',
-        data: FormData.fromMap({
+        data: {
           'username': email,
           'password': password,
-        }),
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+        ),
       );
 
       final token = response.data['access_token'];
       ref.read(authTokenProvider.notifier).setToken(token);
 
       state = const AsyncValue.data(null);
-    } catch (e) {
-      state = AsyncValue.error(e, StackTrace.current);
+    } catch (e, st) {
+      print('AUTH ERROR: $e');
+      print(st);
+      state = AsyncValue.error(e, st);
       rethrow;
     }
   }
